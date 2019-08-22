@@ -95,6 +95,7 @@ static struct tcphdr * spooftcp_tcphdr_put(struct sk_buff *nskb, const struct tc
 static unsigned int spooftcp_tg4(struct sk_buff *oskb, const struct xt_action_param *par)
 {
 	const struct iphdr *oiph;
+	struct tcphdr otcphb;
 	struct tcphdr *otcph;
 	struct net *net;
 	struct dst_entry *dst;
@@ -115,7 +116,7 @@ static unsigned int spooftcp_tg4(struct sk_buff *oskb, const struct xt_action_pa
 		return XT_CONTINUE;
 
 	otcph = skb_header_pointer(oskb, ip_hdrlen(oskb), sizeof(struct tcphdr),
-			   otcph);
+			   &otcphb);
 	
 	if (unlikely(!otcph))
 		return XT_CONTINUE;
@@ -220,6 +221,7 @@ static unsigned int spooftcp_tg6(struct sk_buff *oskb, const struct xt_action_pa
 	__u8 proto;
 	int tcphoff;
 	unsigned int otcplen;
+	struct tcphdr otcphb;
 	struct tcphdr *otcph;
 	struct net *net;
 	struct dst_entry *dst;
@@ -258,7 +260,7 @@ static unsigned int spooftcp_tg6(struct sk_buff *oskb, const struct xt_action_pa
 	}
 
 	otcph = skb_header_pointer(oskb, tcphoff, sizeof(struct tcphdr),
-				   otcph);
+				   &otcphb);
 	
 	if (unlikely(!otcph))
 		return XT_CONTINUE;
