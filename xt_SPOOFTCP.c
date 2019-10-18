@@ -10,6 +10,7 @@
 #include <net/ip6_checksum.h>
 #include <net/ip6_route.h>
 #include <net/tcp.h>
+#include <net/addrconf.h>
 
 #include <linux/netfilter_ipv4.h>
 #include <linux/netfilter_ipv6.h>
@@ -269,6 +270,8 @@ static unsigned int spooftcp_tg6(struct sk_buff *oskb, const struct xt_action_pa
 	net = xt_net(par);
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)
 	net = par->net;
+#else
+	net = dev_net(par->out);
 #endif
 
 	dst = dst_clone(skb_dst(oskb));
