@@ -31,10 +31,12 @@ static const struct tcp_flag_names tcp_flag_names[]
     { "PSH", 0x08 },
     { "ACK", 0x10 },
     { "URG", 0x20 },
-    { "ALL", 0x3F },
+    { "ECE", 0x40 },
+    { "CWR", 0x80 },
+    { "ALL", 0xFF },
     { "NONE", 0 },
 };
-#define TCP_FLAG_NAMES_SIZE 8
+#define TCP_FLAG_NAMES_SIZE 10
 
 static __u8 parse_tcp_flag(const char *flags)
 {
