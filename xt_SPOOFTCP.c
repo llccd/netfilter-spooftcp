@@ -51,7 +51,10 @@ static struct tcphdr * spooftcp_tcphdr_put(struct sk_buff *nskb, const struct tc
 	else
 		tcph->seq = otcph->seq;
 	
-	tcph->ack_seq = otcph->ack_seq;
+	if (info->corrupt_ack)
+		tcph->ack_seq = ~otcph->ack_seq;
+	else
+		tcph->ack_seq = otcph->ack_seq;
 
 	tcpopt = (u_int8_t *)tcph + sizeof(struct tcphdr);
 	optoff = 0;

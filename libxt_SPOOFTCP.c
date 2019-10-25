@@ -11,6 +11,7 @@ enum {
 	O_TCP_FLAGS,
 	O_CORRUPT_CHKSUM,
 	O_CORRUPT_SEQ,
+	O_CORRUPT_ACK,
 	O_DELAY,
 	O_PAYLOAD_LEN,
 	O_MD5_OPT,
@@ -90,6 +91,7 @@ static void SPOOFTCP_help()
 		" --tcp-flags\tTCP FLAGS of spoofed packet\n"
 		" --corrupt-checksum\tInvert checksum for spoofed packet\n"
 		" --corrupt-seq\tInvert TCP SEQ # for spoofed packet\n"
+		" --corrupt-ack\tInvert TCP ACK # for spoofed packet\n"
 		" --delay value\tDelay the matched(original) packet by <value> ms (max 255)\n"
 		" --payload-length value\tLength of TCP payload (max 255)\n"
 		" --md5\tAdd TCP MD5 (Option 19) header\n"
@@ -119,6 +121,11 @@ static const struct xt_option_entry SPOOFTCP_opts[] = {
 	{
 		.name	= "corrupt-seq",
 		.id	= O_CORRUPT_SEQ,
+		.type	= XTTYPE_NONE,
+	},
+	{
+		.name	= "corrupt-ack",
+		.id	= O_CORRUPT_ACK,
 		.type	= XTTYPE_NONE,
 	},
 	{
@@ -177,6 +184,9 @@ static void SPOOFTCP_parse(struct xt_option_call *cb)
 		case O_CORRUPT_SEQ:
 			info->corrupt_seq = true;
 			break;
+		case O_CORRUPT_ACK:
+			info->corrupt_ack = true;
+			break;
 		case O_MD5_OPT:
 			info->md5 = true;
 			break;
@@ -218,6 +228,9 @@ static void SPOOFTCP_print(const void *ip, const struct xt_entry_target *target,
 	if (info->corrupt_seq)
 		printf(" Corrupt SEQ");
 
+	if (info->corrupt_ack)
+		printf(" Corrupt ACK");
+
 	if (info->delay)
 		printf(" Delay by %ums", info->delay);
 
@@ -250,6 +263,9 @@ static void SPOOFTCP_save(const void *ip, const struct xt_entry_target *target)
 
 	if (info->corrupt_seq)
 		printf(" --%s", SPOOFTCP_opts[O_CORRUPT_SEQ].name);
+
+	if (info->corrupt_ack)
+		printf(" --%s", SPOOFTCP_opts[O_CORRUPT_ACK].name);
 
 	if (info->delay)
 		printf(" --%s %u", SPOOFTCP_opts[O_DELAY].name, info->delay);
