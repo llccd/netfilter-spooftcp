@@ -21,6 +21,9 @@
 
 #include "xt_SPOOFTCP.h"
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+#define nf_reset(a) nf_reset_ct(a)
+#endif
 
 MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR("LGA1150");
