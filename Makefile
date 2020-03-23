@@ -1,6 +1,7 @@
-PWD         := $(shell pwd) 
+PWD         := $(shell pwd)
 KVERSION    := $(shell uname -r)
 KERNEL_DIR   = /usr/src/linux-headers-$(KVERSION)/
+XTABLES_LIBDIR ?= $(shell pkg-config xtables --variable=xtlibdir)
 ccflags-y += -O3
 obj-m := xt_SPOOFTCP.o
 
@@ -22,7 +23,7 @@ clean:
 	make -C $(KERNEL_DIR) M=$(PWD) clean
 	rm -f libxt_SPOOFTCP.so libxt_SPOOFTCP.o
 install: all
-	install -m 0644 libxt_SPOOFTCP.so /lib/xtables/
+	install -m 0644 libxt_SPOOFTCP.so $(XTABLES_LIBDIR)/
 	modprobe ip6_tables
 	-rmmod xt_SPOOFTCP
 	insmod xt_SPOOFTCP.ko
