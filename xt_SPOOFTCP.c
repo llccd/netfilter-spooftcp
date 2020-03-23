@@ -53,7 +53,7 @@ static struct tcphdr * spooftcp_tcphdr_put(struct sk_buff *nskb, const struct tc
 		tcph->seq = ~otcph->seq;
 	else
 		tcph->seq = otcph->seq;
-	
+
 	if (info->corrupt_ack)
 		tcph->ack_seq = ~otcph->ack_seq;
 	else
@@ -104,7 +104,9 @@ static unsigned int spooftcp_tg4(struct sk_buff *oskb, const struct xt_action_pa
 	const struct iphdr *oiph;
 	struct tcphdr otcphb;
 	struct tcphdr *otcph;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)
 	struct net *net;
+#endif
 	struct dst_entry *dst;
 	struct sk_buff *nskb;
 	struct iphdr *iph;
@@ -124,7 +126,7 @@ static unsigned int spooftcp_tg4(struct sk_buff *oskb, const struct xt_action_pa
 
 	otcph = skb_header_pointer(oskb, ip_hdrlen(oskb), sizeof(struct tcphdr),
 			   &otcphb);
-	
+
 	if (unlikely(!otcph))
 		return XT_CONTINUE;
 
@@ -139,7 +141,7 @@ static unsigned int spooftcp_tg4(struct sk_buff *oskb, const struct xt_action_pa
 		dst_release(dst);
 		return XT_CONTINUE;
 	}
-	
+
 	nskb = alloc_skb(sizeof(struct iphdr) + sizeof(struct tcphdr) +
 			 ALIGN((info->md5 ? OPT_MD5_SIZE : 0) + (info->ts ? OPT_TS_SIZE : 0), 4) +
 			 LL_MAX_HEADER + info->payload_len,
@@ -240,7 +242,7 @@ static unsigned int spooftcp_tg6(struct sk_buff *oskb, const struct xt_action_pa
 
 	if (unlikely(__this_cpu_read(spooftcp_active)))
 		return XT_CONTINUE;
-	
+
 	oip6h = ipv6_hdr(oskb);
 
 	if (unlikely((!(ipv6_addr_type(&oip6h->saddr) & IPV6_ADDR_UNICAST)) ||
@@ -268,7 +270,7 @@ static unsigned int spooftcp_tg6(struct sk_buff *oskb, const struct xt_action_pa
 
 	otcph = skb_header_pointer(oskb, tcphoff, sizeof(struct tcphdr),
 				   &otcphb);
-	
+
 	if (unlikely(!otcph))
 		return XT_CONTINUE;
 
@@ -285,9 +287,9 @@ static unsigned int spooftcp_tg6(struct sk_buff *oskb, const struct xt_action_pa
 		dst_release(dst);
 		return XT_CONTINUE;
 	}
-	
+
 	hh_len = (dst->dev->hard_header_len + 15)&~15;
-	
+
 	nskb = alloc_skb(hh_len + 15 + dst->header_len + sizeof(struct ipv6hdr)
 			 + sizeof(struct tcphdr) + dst->trailer_len + info->payload_len +
 			 ALIGN((info->md5 ? OPT_MD5_SIZE : 0) + (info->ts ? OPT_TS_SIZE : 0), 4),
@@ -331,7 +333,7 @@ static unsigned int spooftcp_tg6(struct sk_buff *oskb, const struct xt_action_pa
 				      IPPROTO_TCP,
 				      csum_partial(tcph,
 						   sizeof(struct tcphdr) + info->payload_len + ALIGN((info->md5 ? OPT_MD5_SIZE : 0) + (info->ts ? OPT_TS_SIZE : 0), 4), 0));
-	
+
 	if (info->corrupt_chksum)
 		tcph->check = ~tcph->check;
 
