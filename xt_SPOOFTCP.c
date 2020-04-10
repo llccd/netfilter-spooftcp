@@ -242,8 +242,7 @@ static unsigned int spooftcp_tg6(struct sk_buff *oskb, const struct xt_action_pa
 
 	oip6h = ipv6_hdr(oskb);
 
-	if (unlikely((!(ipv6_addr_type(&oip6h->saddr) & IPV6_ADDR_UNICAST)) ||
-	    (!(ipv6_addr_type(&oip6h->daddr) & IPV6_ADDR_UNICAST)))) {
+	if (unlikely(!(ipv6_addr_type(&oip6h->daddr) & IPV6_ADDR_UNICAST))) {
 		pr_warn("addr is not unicast.\n");
 		return XT_CONTINUE;
 	}
