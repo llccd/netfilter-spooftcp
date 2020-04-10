@@ -118,7 +118,7 @@ static unsigned int spooftcp_tg4(struct sk_buff *oskb, const struct xt_action_pa
 
 	oiph = ip_hdr(oskb);
 
-	if (unlikely(ip_hdr(oskb)->frag_off & htons(IP_OFFSET)))
+	if (unlikely(par->fragoff))
 		return XT_CONTINUE;
 
 	if (unlikely(skb_rtable(oskb)->rt_flags & (RTCF_BROADCAST | RTCF_MULTICAST)))
