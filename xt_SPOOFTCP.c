@@ -2,9 +2,9 @@
 
 #include <linux/module.h>
 #include <linux/version.h>
-#include <linux/percpu.h>
 #include <linux/delay.h>
 #include <linux/inetdevice.h>
+#include <net/arp.h>
 #include <net/ip.h>
 #include <net/ipv6.h>
 #include <net/ip6_checksum.h>
@@ -15,15 +15,8 @@
 #include <linux/netfilter_ipv4.h>
 #include <linux/netfilter_ipv6.h>
 #include <linux/netfilter/x_tables.h>
-#if IS_ENABLED(CONFIG_NF_CONNTRACK)
-#include <net/netfilter/nf_conntrack.h>
-#endif
 
 #include "xt_SPOOFTCP.h"
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
-#define nf_reset(a) nf_reset_ct(a)
-#endif
 
 MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR("LGA1150");
@@ -31,9 +24,103 @@ MODULE_DESCRIPTION("Xtables: Send spoofed TCP packets");
 MODULE_ALIAS("ipt_SPOOFTCP");
 MODULE_ALIAS("ip6t_SPOOFTCP");
 
-static DEFINE_PER_CPU(bool, spooftcp_active);
-
 static const char *const PAYLOAD_BUFF = "GET / HTTP/1.1\r\nHost: www.baidu.com\r\nConnection: close\r\n\r\n";
+
+static inline void ip_direct_out(struct iphdr *iph, struct dst_entry *dst, struct sk_buff *skb) {
+	struct rtable *rt = (struct rtable *)dst;
+	struct neighbour *neigh;
+	struct net_device *dev = dst->dev;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0)
+	bool is_v6gw = false;
+#else
+	u32 nexthop;
+#endif
+
+	skb->dev = dev;
+	iph->tot_len = htons(skb->len);
+	iph->check = ip_fast_csum((unsigned char *)iph, iph->ihl);
+	if (unlikely(skb->len > dev->mtu)) {
+		net_dbg_ratelimited("payload exceeds mtu\n");
+		kfree_skb(skb);
+		return;
+	}
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0)
+	if (lwtunnel_xmit_redirect(dst->lwtstate)) {
+		int res = lwtunnel_xmit(skb);
+		if (res < 0 || res == LWTUNNEL_XMIT_DONE)
+			return;
+	}
+#endif
+	rcu_read_lock_bh();
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0)
+	neigh = ip_neigh_for_gw(rt, skb, &is_v6gw);
+#else
+	nexthop = (__force u32) rt_nexthop(rt, ip_hdr(skb)->daddr);
+	neigh = __ipv4_neigh_lookup_noref(dev, nexthop);
+	if (unlikely(!neigh))
+		neigh = __neigh_create(&arp_tbl, &nexthop, dev, false);
+#endif
+	if (unlikely(IS_ERR(neigh))) {
+		rcu_read_unlock_bh();
+		net_dbg_ratelimited("No header cache and no neighbour!\n");
+		kfree_skb(skb);
+		return;
+	}
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0)
+	/* if crossing protocols, can not use the cached header */
+	neigh_output(neigh, skb, is_v6gw);
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+	neigh_output(neigh, skb);
+#else
+	dst_neigh_output(dst, neigh, skb);
+#endif
+	rcu_read_unlock_bh();
+}
+
+static inline void ip6_direct_out(struct ipv6hdr *ip6h, struct dst_entry *dst, struct sk_buff *skb) {
+	struct neighbour *neigh;
+	struct net_device *dev = dst->dev;
+	const struct in6_addr *nexthop;
+
+	skb->dev = dev;
+	ip6h->payload_len = htons(skb->len - sizeof(struct ipv6hdr));
+	IP6CB(skb)->nhoff = offsetof(struct ipv6hdr, nexthdr);
+	if (unlikely(skb->len > dev->mtu)) {
+		net_dbg_ratelimited("payload exceeds mtu\n");
+		kfree_skb(skb);
+		return;
+	}
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0)
+	if (lwtunnel_xmit_redirect(dst->lwtstate)) {
+		int res = lwtunnel_xmit(skb);
+		if (res < 0 || res == LWTUNNEL_XMIT_DONE)
+			return;
+	}
+#endif
+	rcu_read_lock_bh();
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 2, 0)
+	nexthop = rt6_nexthop((struct rt6_info *)dst, &ipv6_hdr(skb)->daddr);
+#else
+	nexthop = rt6_nexthop((struct rt6_info *)dst);
+#endif
+	neigh = __ipv6_neigh_lookup_noref(dev, nexthop);
+	if (unlikely(!neigh))
+		neigh = __neigh_create(&nd_tbl, nexthop, dev, false);
+	if (unlikely(IS_ERR(neigh))) {
+		rcu_read_unlock_bh();
+		net_dbg_ratelimited("No header cache and no neighbour!\n");
+		kfree_skb(skb);
+		return;
+	}
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0)
+	neigh_output(neigh, skb, false);
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+	neigh_output(neigh, skb);
+#else
+	dst_neigh_output(dst, neigh, skb);
+#endif
+	rcu_read_unlock_bh();
+}
 
 static struct tcphdr * spooftcp_tcphdr_put(struct sk_buff *nskb, const struct tcphdr *otcph, const struct xt_spooftcp_info *info)
 {
@@ -104,17 +191,11 @@ static unsigned int spooftcp_tg4(struct sk_buff *oskb, const struct xt_action_pa
 	const struct iphdr *oiph;
 	struct tcphdr otcphb;
 	struct tcphdr *otcph;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)
-	struct net *net;
-#endif
 	struct dst_entry *dst;
 	struct sk_buff *nskb;
 	struct iphdr *iph;
 	struct tcphdr *tcph;
 	const struct xt_spooftcp_info *info = par->targinfo;
-
-	if (unlikely(__this_cpu_read(spooftcp_active)))
-		return XT_CONTINUE;
 
 	oiph = ip_hdr(oskb);
 
@@ -129,12 +210,6 @@ static unsigned int spooftcp_tg4(struct sk_buff *oskb, const struct xt_action_pa
 
 	if (unlikely(!otcph))
 		return XT_CONTINUE;
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
-	net = xt_net(par);
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)
-	net = par->net;
-#endif
 
 	dst = dst_clone(skb_dst(oskb));
 	if (unlikely(dst->error)) {
@@ -197,26 +272,8 @@ static unsigned int spooftcp_tg4(struct sk_buff *oskb, const struct xt_action_pa
 	if (info->corrupt_chksum)
 		tcph->check = ~tcph->check;
 
-#if IS_ENABLED(CONFIG_NF_CONNTRACK)
-	/* Do not track this spoofed packet */
-#	if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
-	nf_reset(nskb);
-	nf_ct_set(nskb, NULL, IP_CT_UNTRACKED);
-#	else
-	nf_conntrack_put(nskb->nfct);
-	nskb->nfct     = &nf_ct_untracked_get()->ct_general;
-	nskb->nfctinfo = IP_CT_NEW;
-	nf_conntrack_get(nskb->nfct);
-#	endif
-#endif
+	ip_direct_out(iph, dst, nskb);
 
-	__this_cpu_write(spooftcp_active, true);
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)
-	ip_local_out(net, nskb->sk, nskb);
-#else
-	ip_local_out(nskb);
-#endif
-	__this_cpu_write(spooftcp_active, false);
 	if (info->delay)
 		mdelay(info->delay);
 
@@ -236,9 +293,6 @@ static unsigned int spooftcp_tg6(struct sk_buff *oskb, const struct xt_action_pa
 	struct ipv6hdr *ip6h;
 	const struct xt_spooftcp_info *info = par->targinfo;
 	struct tcphdr *tcph;
-
-	if (unlikely(__this_cpu_read(spooftcp_active)))
-		return XT_CONTINUE;
 
 	oip6h = ipv6_hdr(oskb);
 
@@ -317,25 +371,8 @@ static unsigned int spooftcp_tg6(struct sk_buff *oskb, const struct xt_action_pa
 	if (info->corrupt_chksum)
 		tcph->check = ~tcph->check;
 
-#if IS_ENABLED(CONFIG_NF_CONNTRACK)
-	/* Do not track this spoofed packet */
-#	if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
-	nf_reset(nskb);
-	nf_ct_set(nskb, NULL, IP_CT_UNTRACKED);
-#	else
-	nf_conntrack_put(nskb->nfct);
-	nskb->nfct     = &nf_ct_untracked_get()->ct_general;
-	nskb->nfctinfo = IP_CT_NEW;
-	nf_conntrack_get(nskb->nfct);
-#	endif
-#endif
-	__this_cpu_write(spooftcp_active, true);
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)
-	ip6_local_out(net, nskb->sk, nskb);
-#else
-	ip6_local_out(nskb);
-#endif
-	__this_cpu_write(spooftcp_active, false);
+	ip6_direct_out(ip6h, dst, nskb);
+
 	if (info->delay)
 		mdelay(info->delay);
 
