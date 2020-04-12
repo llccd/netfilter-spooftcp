@@ -308,7 +308,6 @@ static unsigned int spooftcp_tg6(struct sk_buff *oskb, const struct xt_action_pa
 
 	tcph = spooftcp_tcphdr_put(nskb, otcph, info);
 
-	tcph->check = 0;
 	tcph->check = csum_ipv6_magic(&ipv6_hdr(nskb)->saddr,
 				      &ipv6_hdr(nskb)->daddr,
 				      sizeof(struct tcphdr) + info->payload_len + ALIGN((info->md5 ? OPT_MD5_SIZE : 0) + (info->ts ? OPT_TS_SIZE : 0), 4),
