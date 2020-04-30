@@ -24,6 +24,12 @@ MODULE_DESCRIPTION("Xtables: Send spoofed TCP packets");
 MODULE_ALIAS("ipt_SPOOFTCP");
 MODULE_ALIAS("ip6t_SPOOFTCP");
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0)
+static inline struct net_device *xt_in(const struct xt_action_param *par) {
+  return (struct net_device *)par->in;
+}
+#endif
+
 static const char *const PAYLOAD_BUFF = "GET / HTTP/1.1\r\nHost: www.baidu.com\r\nConnection: close\r\n\r\n";
 
 static inline void ip_direct_out(struct iphdr *iph, struct dst_entry *dst, struct sk_buff *skb) {
@@ -122,7 +128,7 @@ static inline void ip6_direct_out(struct ipv6hdr *ip6h, struct dst_entry *dst, s
 	rcu_read_unlock_bh();
 }
 
-static struct tcphdr * spooftcp_tcphdr_put(struct sk_buff *nskb, const struct tcphdr *otcph, const struct xt_spooftcp_info *info)
+static struct tcphdr * spooftcp_tcphdr_put(struct sk_buff *nskb, const struct tcphdr *otcph, const struct xt_spooftcp_info *info, const bool is_postrouting, unsigned int otcplen)
 {
 	struct tcphdr *tcph;
 	u_int8_t * tcpopt;
@@ -132,19 +138,35 @@ static struct tcphdr * spooftcp_tcphdr_put(struct sk_buff *nskb, const struct tc
 	tcph = (struct tcphdr *)skb_put(nskb, sizeof(struct tcphdr));
 	memset(tcph, 0, sizeof(struct tcphdr));
 	tcph->doff = sizeof(struct tcphdr)/4;
-	tcph->source = otcph->source;
-	tcph->dest = otcph->dest;
 	/* Set flags */
 	((u_int8_t *)tcph)[13] = info->tcp_flags;
-	if (info->corrupt_seq) 
-		tcph->seq = ~otcph->seq;
-	else
-		tcph->seq = otcph->seq;
+	if (is_postrouting) {
+		tcph->source = otcph->source;
+		tcph->dest = otcph->dest;
 
-	if (info->corrupt_ack)
-		tcph->ack_seq = ~otcph->ack_seq;
-	else
-		tcph->ack_seq = otcph->ack_seq;
+		if (info->corrupt_seq)
+			tcph->seq = ~otcph->seq;
+		else
+			tcph->seq = otcph->seq;
+
+		if (info->corrupt_ack)
+			tcph->ack_seq = ~otcph->ack_seq;
+		else
+			tcph->ack_seq = otcph->ack_seq;
+	} else {
+		tcph->source = otcph->dest;
+		tcph->dest = otcph->source;
+
+		if (info->corrupt_seq)
+			tcph->seq = ~otcph->ack_seq;
+		else
+			tcph->seq = otcph->ack_seq;
+
+		if (info->corrupt_ack)
+			tcph->ack_seq = ~htonl(ntohl(otcph->seq) + otcph->syn + otcph->fin + otcplen - (otcph->doff<<2));
+		else
+			tcph->ack_seq = htonl(ntohl(otcph->seq) + otcph->syn + otcph->fin + otcplen - (otcph->doff<<2));
+	}
 
 	tcpopt = (u_int8_t *)tcph + sizeof(struct tcphdr);
 	optoff = 0;
@@ -191,19 +213,29 @@ static unsigned int spooftcp_tg4(struct sk_buff *oskb, const struct xt_action_pa
 	const struct iphdr *oiph;
 	struct tcphdr otcphb;
 	struct tcphdr *otcph;
+	struct net *net;
 	struct dst_entry *dst;
 	struct sk_buff *nskb;
 	struct iphdr *iph;
 	struct tcphdr *tcph;
 	const struct xt_spooftcp_info *info = par->targinfo;
 	unsigned long usecs;
+	struct rtable *rt;
+	struct flowi4 fl4;
+	bool is_postrouting;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+	is_postrouting = (xt_hooknum(par) == NF_INET_POST_ROUTING);
+#else
+	is_postrouting = (par->hooknum == NF_INET_POST_ROUTING);
+#endif
 
 	oiph = ip_hdr(oskb);
 
 	if (unlikely(par->fragoff))
 		return XT_CONTINUE;
 
-	if (unlikely(skb_rtable(oskb)->rt_flags & (RTCF_BROADCAST | RTCF_MULTICAST)))
+	if (unlikely(is_postrouting ? skb_rtable(oskb)->rt_flags & (RTCF_BROADCAST | RTCF_MULTICAST) : (ipv4_is_zeronet(oiph->saddr) || ipv4_is_loopback(oiph->saddr) || ipv4_is_multicast(oiph->saddr))))
 		return XT_CONTINUE;
 
 	otcph = skb_header_pointer(oskb, par->thoff, sizeof(struct tcphdr),
@@ -212,10 +244,30 @@ static unsigned int spooftcp_tg4(struct sk_buff *oskb, const struct xt_action_pa
 	if (unlikely(!otcph))
 		return XT_CONTINUE;
 
-	dst = dst_clone(skb_dst(oskb));
-	if (unlikely(dst->error)) {
-		dst_release(dst);
-		return XT_CONTINUE;
+	if (is_postrouting) {
+		dst = dst_clone(skb_dst(oskb));
+		if (unlikely(dst->error)) {
+			dst_release(dst);
+			return XT_CONTINUE;
+		}
+	} else {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+		net = xt_net(par);
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)
+		net = par->net;
+#else
+		net = dev_net(par->in);
+#endif
+		memset(&fl4, 0, sizeof(struct flowi4));
+		fl4.saddr = oiph->daddr;
+		fl4.daddr = oiph->saddr;
+		fl4.flowi4_oif = xt_in(par)->ifindex;
+		fl4.flowi4_flags = FLOWI_FLAG_KNOWN_NH | FLOWI_FLAG_ANYSRC;
+		fl4.flowi4_mark = oskb->mark;
+		rt = ip_route_output_key(net, &fl4);
+		if (unlikely(IS_ERR(rt)))
+			return XT_CONTINUE;
+		dst = &rt->dst;
 	}
 
 	nskb = alloc_skb(sizeof(struct iphdr) + sizeof(struct tcphdr) +
@@ -244,17 +296,21 @@ static unsigned int spooftcp_tg4(struct sk_buff *oskb, const struct xt_action_pa
 	iph->protocol	= IPPROTO_TCP;
 	iph->check	= 0;
 
-	if (info->masq) {
+	if (is_postrouting) {
+		if (info->masq) {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
-		iph->saddr	= inet_select_addr(xt_out(par), 0, RT_SCOPE_UNIVERSE);
+			iph->saddr	= inet_select_addr(xt_out(par), 0, RT_SCOPE_UNIVERSE);
 #else
-		iph->saddr	= inet_select_addr(par->out, 0, RT_SCOPE_UNIVERSE);
+			iph->saddr	= inet_select_addr(par->out, 0, RT_SCOPE_UNIVERSE);
 #endif
+		} else {
+			iph->saddr	= oiph->saddr;
+		}
+		iph->daddr	= oiph->daddr;
 	} else {
-		iph->saddr	= oiph->saddr;
+		iph->saddr	= oiph->daddr;
+		iph->daddr	= oiph->saddr;
 	}
-
-	iph->daddr	= oiph->daddr;
 	if (info->ttl)
 		iph->ttl = info->ttl;
 	else
@@ -262,7 +318,7 @@ static unsigned int spooftcp_tg4(struct sk_buff *oskb, const struct xt_action_pa
 
 	nskb->protocol = htons(ETH_P_IP);
 
-	tcph = spooftcp_tcphdr_put(nskb, otcph, info);
+	tcph = spooftcp_tcphdr_put(nskb, otcph, info, is_postrouting, oskb->len - ip_hdrlen(oskb));
 
 	tcph->check = ~tcp_v4_check(sizeof(struct tcphdr) + info->payload_len +
 				  ALIGN((info->md5 ? OPT_MD5_SIZE : 0) + (info->ts ? OPT_TS_SIZE : 0), 4),
@@ -301,10 +357,18 @@ static unsigned int spooftcp_tg6(struct sk_buff *oskb, const struct xt_action_pa
 	const struct xt_spooftcp_info *info = par->targinfo;
 	struct tcphdr *tcph;
 	unsigned long usecs;
+	struct flowi6 fl6;
+	bool is_postrouting;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
+	is_postrouting = (xt_hooknum(par) == NF_INET_POST_ROUTING);
+#else
+	is_postrouting = (par->hooknum == NF_INET_POST_ROUTING);
+#endif
 
 	oip6h = ipv6_hdr(oskb);
 
-	if (unlikely(!(ipv6_addr_type(&oip6h->daddr) & IPV6_ADDR_UNICAST))) {
+	if (unlikely(!(ipv6_addr_type(is_postrouting ? &oip6h->daddr : &oip6h->saddr) & IPV6_ADDR_UNICAST))) {
 		pr_warn("addr is not unicast.\n");
 		return XT_CONTINUE;
 	}
@@ -322,10 +386,20 @@ static unsigned int spooftcp_tg6(struct sk_buff *oskb, const struct xt_action_pa
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)
 	net = par->net;
 #else
-	net = dev_net(par->out);
+	net = dev_net(is_postrouting ? par->out : par->in);
 #endif
 
-	dst = dst_clone(skb_dst(oskb));
+	if (is_postrouting) {
+		dst = dst_clone(skb_dst(oskb));
+	} else {
+		memset(&fl6, 0, sizeof(struct flowi6));
+		fl6.saddr = oip6h->daddr;
+		fl6.daddr = oip6h->saddr;
+		fl6.flowi6_oif = xt_in(par)->ifindex;
+		fl6.flowi6_flags = FLOWI_FLAG_KNOWN_NH | FLOWI_FLAG_ANYSRC;
+		fl6.flowi6_mark = oskb->mark;
+		dst = ip6_route_output(net, NULL, &fl6);
+	}
 	if (unlikely(dst->error)) {
 		dst_release(dst);
 		return XT_CONTINUE;
@@ -354,20 +428,24 @@ static unsigned int spooftcp_tg6(struct sk_buff *oskb, const struct xt_action_pa
 	ip6h->hop_limit = info->ttl ? info->ttl : oip6h->hop_limit;
 	ip6h->nexthdr = IPPROTO_TCP;
 
-	if (info->masq) {
+	if (is_postrouting) {
+		if (info->masq) {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
-		ipv6_dev_get_saddr(net, xt_out(par), &oip6h->daddr, 0, &ip6h->saddr);
+			ipv6_dev_get_saddr(net, xt_out(par), &oip6h->daddr, 0, &ip6h->saddr);
 #else
-		ipv6_dev_get_saddr(net, par->out, &oip6h->daddr, 0, &ip6h->saddr);
+			ipv6_dev_get_saddr(net, par->out, &oip6h->daddr, 0, &ip6h->saddr);
 #endif
+		} else {
+			ip6h->saddr = oip6h->saddr;
+		}
+		ip6h->daddr = oip6h->daddr;
 	} else {
-		ip6h->saddr = oip6h->saddr;
+		ip6h->saddr = oip6h->daddr;
+		ip6h->daddr = oip6h->saddr;
 	}
-
-	ip6h->daddr = oip6h->daddr;
 	nskb->protocol = htons(ETH_P_IPV6);
 
-	tcph = spooftcp_tcphdr_put(nskb, otcph, info);
+	tcph = spooftcp_tcphdr_put(nskb, otcph, info, is_postrouting, otcplen);
 
 	tcph->check = csum_ipv6_magic(&ipv6_hdr(nskb)->saddr,
 				      &ipv6_hdr(nskb)->daddr,
@@ -399,7 +477,7 @@ static struct xt_target spooftcp_tg_regs[] __read_mostly = {
 		.name		= "SPOOFTCP",
 		.target		= spooftcp_tg4,
 		.targetsize 	= sizeof(struct xt_spooftcp_info),
-		.hooks		= 1 << NF_INET_POST_ROUTING,
+		.hooks		= (1 << NF_INET_PRE_ROUTING) | (1 << NF_INET_POST_ROUTING),
 		.proto		= IPPROTO_TCP,
 		.me		= THIS_MODULE,
 	},
@@ -408,7 +486,7 @@ static struct xt_target spooftcp_tg_regs[] __read_mostly = {
 		.name		= "SPOOFTCP",
 		.target		= spooftcp_tg6,
 		.targetsize 	= sizeof(struct xt_spooftcp_info),
-		.hooks		= 1 << NF_INET_POST_ROUTING,
+		.hooks		= (1 << NF_INET_PRE_ROUTING) | (1 << NF_INET_POST_ROUTING),
 		.proto		= IPPROTO_TCP,
 		.me		= THIS_MODULE,
 	}
