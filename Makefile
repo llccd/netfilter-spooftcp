@@ -14,7 +14,7 @@ strip: libxt_SPOOFTCP.so mod
 libxt_SPOOFTCP.so: libxt_SPOOFTCP.o
 	$(CC) ${CFLAGS} ${LDFLAGS} -shared -lxtables libxt_SPOOFTCP.o -o libxt_SPOOFTCP.so
 
-libxt_SPOOFTCP.o:
+libxt_SPOOFTCP.o: libxt_SPOOFTCP.c xt_SPOOFTCP.h
 	$(CC) ${CFLAGS} -O3 -fPIC -c libxt_SPOOFTCP.c -o libxt_SPOOFTCP.o
 
 mod:
