@@ -6,6 +6,10 @@
 
 #include "xt_SPOOFTCP.h"
 
+#ifndef ARRAY_SIZE
+#define ARRAY_SIZE(a) (sizeof(a)/sizeof(*a))
+#endif
+
 enum {
 	O_TTL,
 	O_TCP_FLAGS,
@@ -37,7 +41,6 @@ static const struct tcp_flag_names tcp_flag_names[]
     { "ALL", 0xFF },
     { "NONE", 0 },
 };
-#define TCP_FLAG_NAMES_SIZE 10
 
 static __u8 parse_tcp_flag(const char *flags)
 {
@@ -49,12 +52,12 @@ static __u8 parse_tcp_flag(const char *flags)
 
 	for (ptr = strtok(buffer, ","); ptr; ptr = strtok(NULL, ",")) {
 		unsigned int i;
-		for (i = 0; i < TCP_FLAG_NAMES_SIZE; ++i)
+		for (i = 0; i < ARRAY_SIZE(tcp_flag_names); ++i)
 			if (strcasecmp(tcp_flag_names[i].name, ptr) == 0) {
 				ret |= tcp_flag_names[i].flag;
 				break;
 			}
-		if (i == TCP_FLAG_NAMES_SIZE)
+		if (i == ARRAY_SIZE(tcp_flag_names))
 			xtables_error(PARAMETER_PROBLEM,
 				   "Unknown TCP flag `%s'", ptr);
 	}
