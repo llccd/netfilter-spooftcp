@@ -6,14 +6,14 @@
 struct xt_spooftcp_info {
     __u8 ttl;
     __u8 tcp_flags;
-    __u8 corrupt_chksum;
-    __u8 corrupt_seq;
-    __u8 corrupt_ack;
     __u8 delay;
     __u8 payload_len;
-    __u8 md5;
-    __u8 ts;
-    __u8 masq;
+    __u8 corrupt_chksum:1;
+    __u8 corrupt_seq:1;
+    __u8 corrupt_ack:1;
+    __u8 md5:1;
+    __u8 ts:1;
+    __u8 masq:1;
 };
 
 /* MD5 option */
