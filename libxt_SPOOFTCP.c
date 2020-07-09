@@ -95,7 +95,7 @@ static void SPOOFTCP_help()
 		" --corrupt-checksum\tInvert checksum for spoofed packet\n"
 		" --corrupt-seq\tInvert TCP SEQ # for spoofed packet\n"
 		" --corrupt-ack\tInvert TCP ACK # for spoofed packet\n"
-		" --delay value\tDelay the matched(original) packet by <value> ms (max 255)\n"
+		" --delay value\tDelay the matched(original) packet by <value> us (max 65535)\n"
 		" --payload-length value\tLength of TCP payload (max 255)\n"
 		" --md5\tAdd TCP MD5 (Option 19) header\n"
 		" --ts\tAdd TCP Timestamp (Option 8) header\n"
@@ -134,9 +134,9 @@ static const struct xt_option_entry SPOOFTCP_opts[] = {
 	{
 		.name	= "delay",
 		.id	= O_DELAY,
-		.type	= XTTYPE_UINT8,
+		.type	= XTTYPE_UINT16,
 		.min	= 0,
-		.max	= UINT8_MAX,
+		.max	= UINT16_MAX,
 		.flags	= XTOPT_PUT, XTOPT_POINTER(struct xt_spooftcp_info, delay),
 	},
 	{
@@ -235,7 +235,7 @@ static void SPOOFTCP_print(const void *ip, const struct xt_entry_target *target,
 		printf(" Corrupt ACK");
 
 	if (info->delay)
-		printf(" Delay by %ums", info->delay);
+		printf(" Delay by %uus", info->delay);
 
 	if (info->payload_len)
 		printf(" Payload length %u", info->payload_len);

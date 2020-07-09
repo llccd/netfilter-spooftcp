@@ -196,6 +196,7 @@ static unsigned int spooftcp_tg4(struct sk_buff *oskb, const struct xt_action_pa
 	struct iphdr *iph;
 	struct tcphdr *tcph;
 	const struct xt_spooftcp_info *info = par->targinfo;
+	unsigned long usecs;
 
 	oiph = ip_hdr(oskb);
 
@@ -274,8 +275,14 @@ static unsigned int spooftcp_tg4(struct sk_buff *oskb, const struct xt_action_pa
 
 	ip_direct_out(iph, dst, nskb);
 
-	if (info->delay)
-		mdelay(info->delay);
+	if (info->delay) {
+		usecs = info->delay;
+		while (usecs > MAX_UDELAY_MS * 1000) {
+			udelay(MAX_UDELAY_MS * 1000);
+			usecs -= MAX_UDELAY_MS * 1000;
+		}
+		udelay(usecs);
+	}
 
 	return XT_CONTINUE;
 }
@@ -293,6 +300,7 @@ static unsigned int spooftcp_tg6(struct sk_buff *oskb, const struct xt_action_pa
 	struct ipv6hdr *ip6h;
 	const struct xt_spooftcp_info *info = par->targinfo;
 	struct tcphdr *tcph;
+	unsigned long usecs;
 
 	oip6h = ipv6_hdr(oskb);
 
@@ -373,8 +381,14 @@ static unsigned int spooftcp_tg6(struct sk_buff *oskb, const struct xt_action_pa
 
 	ip6_direct_out(ip6h, dst, nskb);
 
-	if (info->delay)
-		mdelay(info->delay);
+	if (info->delay) {
+		usecs = info->delay;
+		while (usecs > MAX_UDELAY_MS * 1000) {
+			udelay(MAX_UDELAY_MS * 1000);
+			usecs -= MAX_UDELAY_MS * 1000;
+		}
+		udelay(usecs);
+	}
 
 	return XT_CONTINUE;
 }
