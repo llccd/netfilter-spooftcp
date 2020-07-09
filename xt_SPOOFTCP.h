@@ -8,6 +8,7 @@ struct xt_spooftcp_info {
     __u8 tcp_flags;
     __u16 delay;
     __u8 payload_len;
+    __u8 repeat;
     __u8 corrupt_chksum:1;
     __u8 corrupt_seq:1;
     __u8 corrupt_ack:1;

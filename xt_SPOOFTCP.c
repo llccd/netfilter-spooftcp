@@ -32,7 +32,7 @@ static inline struct net_device *xt_in(const struct xt_action_param *par) {
 
 static const char *const PAYLOAD_BUFF = "GET / HTTP/1.1\r\nHost: www.baidu.com\r\nConnection: close\r\n\r\n";
 
-static inline void ip_direct_out(struct iphdr *iph, struct dst_entry *dst, struct sk_buff *skb) {
+static inline void ip_direct_out(struct iphdr *iph, struct dst_entry *dst, struct sk_buff *skb, __u8 repeat) {
 	struct rtable *rt = (struct rtable *)dst;
 	struct neighbour *neigh;
 	struct net_device *dev = dst->dev;
@@ -72,6 +72,17 @@ static inline void ip_direct_out(struct iphdr *iph, struct dst_entry *dst, struc
 		kfree_skb(skb);
 		return;
 	}
+	while (repeat) {
+		skb_get(skb);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0)
+		neigh_output(neigh, skb, is_v6gw);
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+		neigh_output(neigh, skb);
+#else
+		dst_neigh_output(dst, neigh, skb);
+#endif
+		repeat--;
+	}
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0)
 	/* if crossing protocols, can not use the cached header */
 	neigh_output(neigh, skb, is_v6gw);
@@ -83,7 +94,7 @@ static inline void ip_direct_out(struct iphdr *iph, struct dst_entry *dst, struc
 	rcu_read_unlock_bh();
 }
 
-static inline void ip6_direct_out(struct ipv6hdr *ip6h, struct dst_entry *dst, struct sk_buff *skb) {
+static inline void ip6_direct_out(struct ipv6hdr *ip6h, struct dst_entry *dst, struct sk_buff *skb, __u8 repeat) {
 	struct neighbour *neigh;
 	struct net_device *dev = dst->dev;
 	const struct in6_addr *nexthop;
@@ -117,6 +128,17 @@ static inline void ip6_direct_out(struct ipv6hdr *ip6h, struct dst_entry *dst, s
 		net_dbg_ratelimited("No header cache and no neighbour!\n");
 		kfree_skb(skb);
 		return;
+	}
+	while (repeat) {
+		skb_get(skb);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0)
+		neigh_output(neigh, skb, false);
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+		neigh_output(neigh, skb);
+#else
+		dst_neigh_output(dst, neigh, skb);
+#endif
+		repeat--;
 	}
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0)
 	neigh_output(neigh, skb, false);
@@ -329,7 +351,7 @@ static unsigned int spooftcp_tg4(struct sk_buff *oskb, const struct xt_action_pa
 	if (info->corrupt_chksum)
 		tcph->check = ~tcph->check;
 
-	ip_direct_out(iph, dst, nskb);
+	ip_direct_out(iph, dst, nskb, info->repeat);
 
 	if (info->delay) {
 		usecs = info->delay;
@@ -457,7 +479,7 @@ static unsigned int spooftcp_tg6(struct sk_buff *oskb, const struct xt_action_pa
 	if (info->corrupt_chksum)
 		tcph->check = ~tcph->check;
 
-	ip6_direct_out(ip6h, dst, nskb);
+	ip6_direct_out(ip6h, dst, nskb, info->repeat);
 
 	if (info->delay) {
 		usecs = info->delay;

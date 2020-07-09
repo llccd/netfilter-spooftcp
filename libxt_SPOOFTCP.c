@@ -18,6 +18,7 @@ enum {
 	O_CORRUPT_ACK,
 	O_DELAY,
 	O_PAYLOAD_LEN,
+	O_REPEAT,
 	O_MD5_OPT,
 	O_TS_OPT,
 	O_MASQ,
@@ -97,6 +98,7 @@ static void SPOOFTCP_help()
 		" --corrupt-ack\tInvert TCP ACK # for spoofed packet\n"
 		" --delay value\tDelay the matched(original) packet by <value> us (max 65535)\n"
 		" --payload-length value\tLength of TCP payload (max 255)\n"
+		" --repeat value\tRepeat sending spoofed packet <value> times (max 255)\n"
 		" --md5\tAdd TCP MD5 (Option 19) header\n"
 		" --ts\tAdd TCP Timestamp (Option 8) header\n"
 		" --masq\tEnable MASQUERADE workaround\n");
@@ -148,6 +150,14 @@ static const struct xt_option_entry SPOOFTCP_opts[] = {
 		.flags	= XTOPT_PUT, XTOPT_POINTER(struct xt_spooftcp_info, payload_len),
 	},
 	{
+		.name	= "repeat",
+		.id	= O_REPEAT,
+		.type	= XTTYPE_UINT8,
+		.min	= 0,
+		.max	= UINT8_MAX,
+		.flags	= XTOPT_PUT, XTOPT_POINTER(struct xt_spooftcp_info, repeat),
+	},
+	{
 		.name	= "md5",
 		.id	= O_MD5_OPT,
 		.type	= XTTYPE_NONE,
@@ -177,6 +187,7 @@ static void SPOOFTCP_parse(struct xt_option_call *cb)
 		case O_TTL:
 		case O_DELAY:
 		case O_PAYLOAD_LEN:
+		case O_REPEAT:
 			break; // Do nothing
 		case O_TCP_FLAGS:
 			info->tcp_flags = parse_tcp_flag(cb->arg);
@@ -240,6 +251,9 @@ static void SPOOFTCP_print(const void *ip, const struct xt_entry_target *target,
 	if (info->payload_len)
 		printf(" Payload length %u", info->payload_len);
 
+	if (info->repeat)
+		printf(" Repeat %u times", info->repeat);
+
 	if (info->md5)
 		printf(" with MD5 option");
 
@@ -275,6 +289,9 @@ static void SPOOFTCP_save(const void *ip, const struct xt_entry_target *target)
 
 	if (info->payload_len)
 		printf(" --%s %u", SPOOFTCP_opts[O_PAYLOAD_LEN].name, info->payload_len);
+
+	if (info->repeat)
+		printf(" --%s %u", SPOOFTCP_opts[O_REPEAT].name, info->repeat);
 
 	if (info->md5)
 		printf(" --%s", SPOOFTCP_opts[O_MD5_OPT].name);
