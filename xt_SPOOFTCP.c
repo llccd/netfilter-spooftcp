@@ -124,7 +124,7 @@ static unsigned int spooftcp_tg4(struct sk_buff *oskb, const struct xt_action_pa
 	if (unlikely(skb_rtable(oskb)->rt_flags & (RTCF_BROADCAST | RTCF_MULTICAST)))
 		return XT_CONTINUE;
 
-	otcph = skb_header_pointer(oskb, ip_hdrlen(oskb), sizeof(struct tcphdr),
+	otcph = skb_header_pointer(oskb, par->thoff, sizeof(struct tcphdr),
 			   &otcphb);
 
 	if (unlikely(!otcph))
@@ -226,9 +226,6 @@ static unsigned int spooftcp_tg4(struct sk_buff *oskb, const struct xt_action_pa
 static unsigned int spooftcp_tg6(struct sk_buff *oskb, const struct xt_action_param *par)
 {
 	const struct ipv6hdr *oip6h;
-	__be16 frag_off;
-	__u8 proto;
-	int tcphoff;
 	unsigned int otcplen;
 	struct tcphdr otcphb;
 	struct tcphdr *otcph;
@@ -251,24 +248,9 @@ static unsigned int spooftcp_tg6(struct sk_buff *oskb, const struct xt_action_pa
 		return XT_CONTINUE;
 	}
 
-	proto = oip6h->nexthdr;
-	tcphoff = ipv6_skip_exthdr(oskb, ((u8 *)(oip6h + 1) - oskb->data),
-				   &proto, &frag_off);
+	otcplen = oskb->len - par->thoff;
 
-	if (unlikely((tcphoff < 0) || (tcphoff > oskb->len))) {
-		pr_warn("Cannot get TCP header.\n");
-		return XT_CONTINUE;
-	}
-
-	otcplen = oskb->len - tcphoff;
-
-	if (unlikely(proto != IPPROTO_TCP || otcplen < sizeof(struct tcphdr))) {
-		pr_warn("proto(%d) != IPPROTO_TCP or too short (len = %d)\n",
-			 proto, otcplen);
-		return XT_CONTINUE;
-	}
-
-	otcph = skb_header_pointer(oskb, tcphoff, sizeof(struct tcphdr),
+	otcph = skb_header_pointer(oskb, par->thoff, sizeof(struct tcphdr),
 				   &otcphb);
 
 	if (unlikely(!otcph))
